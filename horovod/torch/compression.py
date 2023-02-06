@@ -63,6 +63,13 @@ class FP16Compressor(Compressor):
             tensor_decompressed = tensor.type(dtype)
         return tensor_decompressed
 
+def _compression_topk(tensor, ratio):
+    # Get the topk percent values of tensor
+    k = max(1, int(tensor.numel() * ratio))
+    _, indices = torch.topk(tensor.abs(), k)
+    values = tensor[indices]
+    
+    return values, indices.type(torch.int32)
 
 def _compression_random(tensor, compress_ratio):
     # Get the total elements of current tensor
@@ -90,19 +97,39 @@ class RandomCompressor(Compressor):
     def compress(self, tensor):
         """Compress tensor by selecting given percentage (ratio) values"""
         tensor_compressed = _compression_random(tensor, self.ratio)
-        ctx = tensor.numel(), tensor.size()
+        ctx = tensor.numel()
+        
         return tensor_compressed, ctx
 
     @staticmethod
     def decompress(self, tensor, ctx):
         """Upcasts the tensor to the initialization size"""
-        num, size = ctx
+        num = ctx
         values, indices = tensor
-        
         # Reshape to the original size and filter the missing values using 0
         tensor_decompressed = torch.zeros(num, dtype=values.dtype, device=values.device)
         tensor_decompressed.scatter_(0, indices.type(torch.int64), values)
         
+        return tensor_decompressed
+
+
+class TopKCompressor(Compressor):
+    
+    """TopK method mentioned in the email"""
+    def __init__(self, ratio):
+        super().__init__()
+        self.ratio = ratio
+
+    def compress(self, tensor):
+        tensors = _compression_topk(tensor, self.ratio)
+        ctx = tensor.numel()
+        return tensors, ctx
+
+    def decompress(self, tensor, ctx):
+        num = ctx
+        values, indices = tensor
+        tensor_decompressed = torch.zeros(num, dtype=values.dtype, device=values.device)
+        tensor_decompressed.scatter_(0, indices.type(torch.int64), values)
         return tensor_decompressed
 
 
@@ -117,3 +144,6 @@ class Compression(object):
     
     """Compress using the random compressor"""
     randomcom = RandomCompressor
+    
+    """Compress using the topk compressor"""
+    topkcom = TopKCompressor
