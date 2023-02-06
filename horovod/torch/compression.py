@@ -64,6 +64,48 @@ class FP16Compressor(Compressor):
         return tensor_decompressed
 
 
+def _compression_random(tensor, compress_ratio):
+    # Get the total elements of current tensor
+    num = tensor.numel()
+    
+    # Calculate the number of elements that required to be filtered
+    k = max(1, int(num * compress_ratio))
+    # Use permutation to do the random generation
+    indices = torch.randperm(num, device=tensor.device)[:k]
+    # Get the k values
+    values = tensor[indices]
+    
+    return values, indices.type(torch.int32) # Return a tuple
+
+
+class RandomCompressor(Compressor):
+    """Compress all floating point gradients to 16-bit."""
+    
+    def __init__(self, ratio = 0.3):
+        super().__init__()
+        # Instead just cut 30 percents, this compressor class could cut the given percentage of ratio
+        self.ratio = ratio
+        
+    @staticmethod
+    def compress(self, tensor):
+        """Compress tensor by selecting given percentage (ratio) values"""
+        tensor_compressed = _compression_random(tensor, self.ratio)
+        ctx = tensor.numel(), tensor.size()
+        return tensor_compressed, ctx
+
+    @staticmethod
+    def decompress(self, tensor, ctx):
+        """Upcasts the tensor to the initialization size"""
+        num, size = ctx
+        values, indices = tensor
+        
+        # Reshape to the original size and filter the missing values using 0
+        tensor_decompressed = torch.zeros(num, dtype=values.dtype, device=values.device)
+        tensor_decompressed.scatter_(0, indices.type(torch.int64), values)
+        
+        return tensor_decompressed
+
+
 class Compression(object):
     """Optional gradient compression algorithm used during allreduce."""
 
@@ -72,3 +114,6 @@ class Compression(object):
 
     """Compress all floating point gradients to 16-bit."""
     fp16 = FP16Compressor
+    
+    """Compress using the random compressor"""
+    randomcom = RandomCompressor
